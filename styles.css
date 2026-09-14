@@ -1,0 +1,144 @@
+:root {
+  --sea: #0b3954;
+  --sea-light: #1b6ca8;
+  --miss: #9fb1bd;
+  --hit: #e4572e;
+  --sunk: #7a1f12;
+  --ship: #2f4858;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  padding: 1.5rem;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  background: #f4f7fa;
+  color: #12232e;
+}
+
+h1 {
+  margin: 0 0 0.25rem;
+}
+
+h2 {
+  font-size: 1rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  margin: 0 0 0.5rem;
+}
+
+#status {
+  margin: 0 0 1.5rem;
+  font-size: 1.05rem;
+}
+
+main {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2rem;
+  align-items: flex-start;
+}
+
+.board {
+  display: grid;
+  grid-template-columns: repeat(10, 2rem);
+  grid-template-rows: repeat(10, 2rem);
+  gap: 2px;
+  background: #cdd9e1;
+  padding: 2px;
+  border-radius: 4px;
+}
+
+.cell {
+  border: 0;
+  padding: 0;
+  background: var(--sea-light);
+  border-radius: 2px;
+  cursor: default;
+}
+
+.board.actionable .cell:not(:disabled) {
+  cursor: pointer;
+}
+
+.board.actionable .cell:not(:disabled):hover {
+  outline: 2px solid #12232e;
+}
+
+.cell.ship {
+  background: var(--ship);
+}
+
+.cell.miss {
+  background: var(--miss);
+}
+
+.cell.hit {
+  background: var(--hit);
+}
+
+.cell.sunk {
+  background: var(--sunk);
+}
+
+.cell.preview {
+  background: #76c893;
+}
+
+.cell.preview-invalid {
+  background: #b23a48;
+}
+
+.sidebar {
+  min-width: 15rem;
+  max-width: 20rem;
+}
+
+.controls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  margin-bottom: 1.5rem;
+}
+
+button {
+  padding: 0.5rem 0.75rem;
+  font: inherit;
+  border: 1px solid var(--sea);
+  background: #fff;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: var(--sea);
+  color: #fff;
+}
+
+#fleet {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 1.5rem;
+}
+
+#fleet li {
+  display: flex;
+  justify-content: space-between;
+  padding: 0.15rem 0;
+}
+
+#fleet li.sunk {
+  text-decoration: line-through;
+  color: var(--sunk);
+}
+
+#log {
+  margin: 0;
+  padding-left: 1.2rem;
+  max-height: 14rem;
+  overflow-y: auto;
+  font-size: 0.9rem;
+}

@@ -1,0 +1,11 @@
+{
+  "name": "battleship",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Browser Battleship game against a computer opponent, with no runtime dependencies",
+  "type": "module",
+  "scripts": {
+    "test": "node --test test/",
+    "start": "node scripts/serve.js"
+  }
+}

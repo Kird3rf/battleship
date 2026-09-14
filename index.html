@@ -1,0 +1,41 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Battleship</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Battleship</h1>
+      <p id="status">Place your fleet.</p>
+    </header>
+
+    <main>
+      <section class="board-panel">
+        <h2>Your waters</h2>
+        <div id="player-board" class="board" aria-label="Your board"></div>
+      </section>
+
+      <section class="board-panel">
+        <h2>Enemy waters</h2>
+        <div id="computer-board" class="board" aria-label="Enemy board"></div>
+      </section>
+
+      <aside class="sidebar">
+        <div class="controls">
+          <button id="rotate" type="button">Rotate (horizontal)</button>
+          <button id="random" type="button">Random fleet</button>
+          <button id="restart" type="button">New game</button>
+        </div>
+        <h2>Fleet</h2>
+        <ul id="fleet"></ul>
+        <h2>Log</h2>
+        <ol id="log"></ol>
+      </aside>
+    </main>
+
+    <script type="module" src="src/ui.js"></script>
+  </body>
+</html>
