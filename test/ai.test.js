@@ -12,7 +12,7 @@ function simulate(opponent = new Opponent()) {
     assert.ok(shot, 'opponent always has a cell left to fire at');
     const { outcome } = board.receiveShot(shot.x, shot.y);
     opponent.recordResult(shot, outcome);
-    shots.push(shot);
+    shots.push({ ...shot, outcome });
     assert.ok(shots.length <= SIZE * SIZE, 'simulation does not run away');
   }
   return { board, shots };
@@ -78,6 +78,69 @@ test('sinking a ship clears its candidates and returns to hunt mode', () => {
   assert.equal(opponent.axis, null);
   assert.equal(opponent.mode, HUNT);
 });
+
+test('a hit after an abandoned target run still enters target mode', () => {
+  const opponent = new Opponent();
+  // Work a ship in column E without ever sinking it, until the queue drains.
+  for (const [cell, outcome] of [
+    [{ x: 4, y: 4 }, HIT],
+    [{ x: 4, y: 3 }, HIT],
+    [{ x: 4, y: 2 }, 'miss'],
+    [{ x: 4, y: 5 }, 'miss'],
+  ]) {
+    opponent.tried.add(`${cell.x},${cell.y}`);
+    opponent.recordResult(cell, outcome);
+  }
+  assert.equal(opponent.mode, HUNT, 'queue drained without a sinking');
+
+  opponent.nextShot(); // a hunt shot clears the abandoned run
+  const hit = { x: 6, y: 6 };
+  opponent.tried.add('6,6');
+  opponent.recordResult(hit, HIT);
+
+  assert.equal(opponent.mode, TARGET, 'the new hit is pursued');
+  assert.ok(
+    opponent.queue.every((c) => Math.abs(c.x - hit.x) + Math.abs(c.y - hit.y) === 1),
+    'candidates neighbour the new hit, not the abandoned ship',
+  );
+  assert.equal(opponent.axis, null, 'the stale axis is forgotten');
+});
+
+test('a fresh hit is always followed up, over 200 simulated games', () => {
+  for (let run = 0; run < 200; run += 1) {
+    const { shots } = simulate();
+    const tried = new Set();
+    let open = []; // hits on the ship currently being worked
+
+    shots.forEach((shot, i) => {
+      tried.add(`${shot.x},${shot.y}`);
+      const adjacent = open.some((h) => Math.abs(h.x - shot.x) + Math.abs(h.y - shot.y) === 1);
+      if (shot.outcome === SUNK || !adjacent) open = []; // sunk, or back to hunting
+      if (shot.outcome !== HIT) return;
+      open.push(shot);
+      const next = shots[i + 1];
+      // Once two hits line up the opponent deliberately ignores off-axis cells,
+      // so only a first, unresolved hit must be pursued.
+      if (!next || open.length !== 1) return;
+
+      const followUps = neighbours(shot).filter((c) => !tried.has(`${c.x},${c.y}`));
+      if (followUps.length === 0) return;
+      assert.ok(
+        followUps.some((c) => c.x === next.x && c.y === next.y),
+        `run ${run}: hit at ${shot.x},${shot.y} was abandoned for ${next.x},${next.y}`,
+      );
+    });
+  }
+});
+
+function neighbours({ x, y }) {
+  return [
+    { x, y: y - 1 },
+    { x, y: y + 1 },
+    { x: x - 1, y },
+    { x: x + 1, y },
+  ].filter((c) => c.x >= 0 && c.y >= 0 && c.x < SIZE && c.y < SIZE);
+}
 
 test('the opponent never fires out of bounds', () => {
   const { shots } = simulate();

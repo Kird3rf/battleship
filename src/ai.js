@@ -28,7 +28,7 @@ export class Opponent {
   }
 
   get mode() {
-    return this.queue.length > 0 ? TARGET : HUNT;
+    return this.queue.some((c) => !this.hasTried(c.x, c.y)) ? TARGET : HUNT;
   }
 
   hasTried(x, y) {
@@ -37,7 +37,13 @@ export class Opponent {
 
   /** Next cell to fire at, marked as tried so it can never be picked again. */
   nextShot() {
-    const shot = this.takeFromQueue() ?? this.hunt();
+    let shot = this.takeFromQueue();
+    if (!shot) {
+      // The run is over even though nothing sank: forget it, or the next hit
+      // would be chased along the abandoned ship's axis.
+      this.abandonRun();
+      shot = this.hunt();
+    }
     if (!shot) return null;
     this.tried.add(key(shot.x, shot.y));
     return shot;
@@ -49,6 +55,12 @@ export class Opponent {
       if (!this.hasTried(candidate.x, candidate.y)) return candidate;
     }
     return null;
+  }
+
+  abandonRun() {
+    this.queue = [];
+    this.hits = [];
+    this.axis = null;
   }
 
   hunt() {

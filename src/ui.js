@@ -152,6 +152,7 @@ function report(shot) {
   const text = describeShot(shot);
   announce(text);
   const item = document.createElement('li');
+  item.value = game.shotCount;
   item.textContent = text;
   el.log.prepend(item);
 }
