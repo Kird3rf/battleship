@@ -228,6 +228,35 @@ test('play again resets every piece of state, including ship objects', () => {
   assert.equal(game.opponent.tried.size, 0);
 });
 
+test('the shot count numbers entries newest-highest, ignoring rejected shots', () => {
+  const game = startedGame();
+  assert.equal(game.shotCount, 0);
+
+  // The UI prepends each entry and numbers it with the running count, so the
+  // list reads newest first with the newest carrying the highest number.
+  const log = [];
+  const fire = (x, y) => {
+    const shot = game.fireAtEnemy(x, y);
+    if (shot.ok) log.unshift({ value: game.shotCount });
+    const reply = game.fireAtPlayer();
+    if (reply.ok) log.unshift({ value: game.shotCount });
+  };
+
+  fire(0, 0);
+  fire(1, 0);
+  assert.deepEqual(game.fireAtEnemy(0, 0), { ok: false, reason: 'repeat' });
+  fire(2, 0);
+
+  assert.equal(game.shotCount, 6);
+  assert.equal(log.length, 6);
+  assert.equal(log[0].value, 6, 'the newest entry carries the highest number');
+  assert.equal(log.at(-1).value, 1, 'the oldest entry is shot 1');
+  assert.deepEqual(
+    log.map((e) => e.value),
+    [6, 5, 4, 3, 2, 1],
+  );
+});
+
 function startedGame() {
   const game = new Game({ opponent: new Opponent() });
   game.placeRemainingRandomly();

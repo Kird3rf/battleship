@@ -134,6 +134,10 @@ export class Game {
     this.computerShots = 0;
   }
 
+  get shotCount() {
+    return this.playerShots + this.computerShots;
+  }
+
   get nextShip() {
     return FLEET[this.playerBoard.ships.length] ?? null;
   }
