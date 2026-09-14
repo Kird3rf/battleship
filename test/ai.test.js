@@ -10,8 +10,8 @@ function simulate(opponent = new Opponent()) {
   while (!board.allSunk) {
     const shot = opponent.nextShot();
     assert.ok(shot, 'opponent always has a cell left to fire at');
-    const { outcome } = board.receiveShot(shot.x, shot.y);
-    opponent.recordResult(shot, outcome);
+    const { outcome, ship } = board.receiveShot(shot.x, shot.y);
+    opponent.recordResult(shot, outcome, ship && { name: ship.name, size: ship.size });
     shots.push({ ...shot, outcome });
     assert.ok(shots.length <= SIZE * SIZE, 'simulation does not run away');
   }
@@ -79,32 +79,61 @@ test('sinking a ship clears its candidates and returns to hunt mode', () => {
   assert.equal(opponent.mode, HUNT);
 });
 
-test('a hit after an abandoned target run still enters target mode', () => {
+test('a closed line of hits is worked from the sides before hunting resumes', () => {
   const opponent = new Opponent();
-  // Work a ship in column E without ever sinking it, until the queue drains.
-  for (const [cell, outcome] of [
-    [{ x: 4, y: 4 }, HIT],
-    [{ x: 4, y: 3 }, HIT],
-    [{ x: 4, y: 2 }, 'miss'],
-    [{ x: 4, y: 5 }, 'miss'],
-  ]) {
-    opponent.tried.add(`${cell.x},${cell.y}`);
-    opponent.recordResult(cell, outcome);
+  // Two ships touching: a Carrier along row 2 and a Battleship along row 3.
+  // Hitting one cell of each looks like a vertical ship; closing that column
+  // at both ends must not end the pursuit, because both ships are still afloat.
+  play(opponent, [
+    [{ x: 5, y: 1 }, HIT], // F2
+    [{ x: 5, y: 0 }, 'miss'], // F1
+    [{ x: 5, y: 2 }, HIT], // F3
+    [{ x: 5, y: 3 }, 'miss'], // F4
+  ]);
+
+  assert.equal(opponent.mode, TARGET, 'two damaged ships are still open');
+
+  const sides = new Set(['4,1', '6,1', '4,2', '6,2']); // E2, G2, E3, G3
+  for (let i = 0; i < 4; i += 1) {
+    const shot = opponent.nextShot();
+    assert.ok(
+      sides.delete(`${shot.x},${shot.y}`),
+      `shot ${i + 1} probes a neighbour of the unsunk hits, got ${shot.x},${shot.y}`,
+    );
+    opponent.recordResult(shot, 'miss');
   }
-  assert.equal(opponent.mode, HUNT, 'queue drained without a sinking');
 
-  opponent.nextShot(); // a hunt shot clears the abandoned run
-  const hit = { x: 6, y: 6 };
-  opponent.tried.add('6,6');
-  opponent.recordResult(hit, HIT);
-
-  assert.equal(opponent.mode, TARGET, 'the new hit is pursued');
-  assert.ok(
-    opponent.queue.every((c) => Math.abs(c.x - hit.x) + Math.abs(c.y - hit.y) === 1),
-    'candidates neighbour the new hit, not the abandoned ship',
-  );
-  assert.equal(opponent.axis, null, 'the stale axis is forgotten');
+  assert.equal(opponent.axis, null, 'the line axis is dropped once it closes');
+  assert.equal(opponent.mode, HUNT, 'only now, with every neighbour tried, hunt resumes');
 });
+
+test('hits stop being targets once their ship is announced sunk', () => {
+  const opponent = new Opponent();
+  play(opponent, [
+    [{ x: 5, y: 1 }, HIT], // F2
+    [{ x: 5, y: 2 }, HIT], // F3, the touching neighbour
+    [{ x: 5, y: 3 }, 'miss'], // F4
+    [{ x: 5, y: 0 }, SUNK, { name: 'Destroyer', size: 2 }], // F1 completes F1-F2
+  ]);
+
+  assert.deepEqual(
+    opponent.unsunk,
+    [{ x: 5, y: 2 }],
+    'only the hit outside the sunk ship stays a target',
+  );
+  assert.ok(
+    opponent.queue.every((c) => Math.abs(c.x - 5) + Math.abs(c.y - 2) === 1),
+    'candidates belonging to the sunk ship are discarded',
+  );
+});
+
+/** Fires a scripted sequence, marking each cell tried as `nextShot` would. */
+function play(opponent, sequence) {
+  for (const [cell, outcome, ship] of sequence) {
+    opponent.tried.add(`${cell.x},${cell.y}`);
+    opponent.recordResult(cell, outcome, ship);
+  }
+}
 
 test('a fresh hit is always followed up, over 200 simulated games', () => {
   for (let run = 0; run < 200; run += 1) {

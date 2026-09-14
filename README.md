@@ -52,8 +52,11 @@ on the parity mask `(x + y) % 2 === 0` — the shortest ship is two cells long, 
 that mask cannot miss a ship — and falls back to any untried cell if the mask
 runs out. A hit queues the four in-bounds, untried orthogonal neighbours; a
 second hit in line fixes the axis and discards off-axis candidates in favour of
-extending the line. Sinking a ship discards that ship's remaining candidates,
-and the empty queue returns it to hunt mode.
+extending the line. Because ships may touch, a line of hits is not necessarily
+one ship, so a hit stays a target until a ship is announced sunk: when the queue
+runs dry the axis is dropped and the queue is rebuilt from the neighbours of
+every hit not yet accounted for by a sinking. Only when that is empty too does
+it go back to hunting.
 
 Two things are deliberate:
 
