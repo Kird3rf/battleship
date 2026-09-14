@@ -9,30 +9,50 @@
   <body>
     <header>
       <h1>Battleship</h1>
-      <p id="status">Place your fleet.</p>
+      <p id="phase" class="phase">Place your fleet.</p>
     </header>
 
     <main>
-      <section class="board-panel">
-        <h2>Your waters</h2>
-        <div id="player-board" class="board" aria-label="Your board"></div>
+      <section class="panel" aria-labelledby="player-heading">
+        <h2 id="player-heading">Your fleet</h2>
+        <div id="player-grid" class="grid" role="group" aria-labelledby="player-heading"></div>
+        <ul id="player-fleet" class="fleet"></ul>
       </section>
 
-      <section class="board-panel">
-        <h2>Enemy waters</h2>
-        <div id="computer-board" class="board" aria-label="Enemy board"></div>
+      <section class="panel" aria-labelledby="enemy-heading">
+        <h2 id="enemy-heading">Enemy waters</h2>
+        <div id="enemy-grid" class="grid" role="group" aria-labelledby="enemy-heading"></div>
+        <ul id="enemy-fleet" class="fleet"></ul>
       </section>
 
-      <aside class="sidebar">
+      <aside class="panel sidebar">
+        <h2>Controls</h2>
         <div class="controls">
-          <button id="rotate" type="button">Rotate (horizontal)</button>
-          <button id="random" type="button">Random fleet</button>
-          <button id="restart" type="button">New game</button>
+          <button id="rotate" type="button">Rotate: horizontal <kbd>R</kbd></button>
+          <button id="random" type="button">Random</button>
+          <button id="clear" type="button">Clear</button>
+          <button id="start" type="button" disabled>Start game</button>
+          <button id="again" type="button" hidden>Play again</button>
         </div>
-        <h2>Fleet</h2>
-        <ul id="fleet"></ul>
-        <h2>Log</h2>
-        <ol id="log"></ol>
+
+        <h2>Status</h2>
+        <dl class="scoreboard">
+          <dt>Turn</dt>
+          <dd id="turn">Placement</dd>
+          <dt>Your shots</dt>
+          <dd id="player-shots">0</dd>
+          <dt>Computer shots</dt>
+          <dd id="computer-shots">0</dd>
+        </dl>
+
+        <h2>Shot log</h2>
+        <p id="announcer" class="announcer" role="status" aria-live="polite"></p>
+        <ol id="log" class="log"></ol>
+
+        <p class="hint">
+          Place a ship by clicking its bow cell. On the enemy grid use the arrow
+          keys to move and <kbd>Enter</kbd> or <kbd>Space</kbd> to fire.
+        </p>
       </aside>
     </main>
 
