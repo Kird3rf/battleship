@@ -1,4 +1,7 @@
-export const BOARD_SIZE = 10;
+// Pure game state and rules. No DOM access, no imports.
+
+export const SIZE = 10;
+export const COLUMNS = 'ABCDEFGHIJ'.split('');
 
 export const FLEET = [
   { name: 'Carrier', size: 5 },
@@ -8,84 +11,73 @@ export const FLEET = [
   { name: 'Destroyer', size: 2 },
 ];
 
-export const CELL = {
-  EMPTY: 'empty',
-  SHIP: 'ship',
-  MISS: 'miss',
-  HIT: 'hit',
-  SUNK: 'sunk',
-};
+export const MISS = 'miss';
+export const HIT = 'hit';
+export const SUNK = 'sunk';
 
-export function coordsFor({ row, col, size, horizontal }) {
+export function cellName(x, y) {
+  return `${COLUMNS[x]}${y + 1}`;
+}
+
+export function key(x, y) {
+  return `${x},${y}`;
+}
+
+export function shipCells(x, y, size, horizontal) {
   return Array.from({ length: size }, (_, i) => ({
-    row: horizontal ? row : row + i,
-    col: horizontal ? col + i : col,
+    x: horizontal ? x + i : x,
+    y: horizontal ? y : y + i,
   }));
 }
 
+export function inBounds(x, y) {
+  return x >= 0 && y >= 0 && x < SIZE && y < SIZE;
+}
+
+/** One side's grid: its ships and the shots fired at it. */
 export class Board {
-  constructor(size = BOARD_SIZE) {
-    this.size = size;
+  constructor() {
     this.ships = [];
-    this.shots = new Set();
+    this.shots = new Map(); // key -> MISS | HIT
   }
 
-  inBounds(row, col) {
-    return row >= 0 && col >= 0 && row < this.size && col < this.size;
+  shipAt(x, y) {
+    return this.ships.find((ship) => ship.cells.some((c) => c.x === x && c.y === y));
   }
 
-  shipAt(row, col) {
-    return this.ships.find((ship) =>
-      ship.coords.some((c) => c.row === row && c.col === col),
-    );
+  /** Ships must lie fully on the board and not overlap; touching is allowed. */
+  canPlace(x, y, size, horizontal) {
+    const cells = shipCells(x, y, size, horizontal);
+    return cells.every((c) => inBounds(c.x, c.y) && !this.shipAt(c.x, c.y));
   }
 
-  canPlace({ row, col, size, horizontal }) {
-    const coords = coordsFor({ row, col, size, horizontal });
-    return coords.every(
-      (c) => this.inBounds(c.row, c.col) && !this.shipAt(c.row, c.col),
-    );
-  }
-
-  place({ name, row, col, size, horizontal }) {
-    if (!this.canPlace({ row, col, size, horizontal })) {
-      throw new Error(`Cannot place ${name} at ${row},${col}`);
+  place(name, size, x, y, horizontal) {
+    if (!this.canPlace(x, y, size, horizontal)) {
+      throw new Error(`Invalid placement for ${name} at ${cellName(x, y)}`);
     }
-    const ship = {
-      name,
-      size,
-      horizontal,
-      coords: coordsFor({ row, col, size, horizontal }),
-      hits: 0,
-    };
+    const ship = { name, size, horizontal, cells: shipCells(x, y, size, horizontal), hits: 0 };
     this.ships.push(ship);
     return ship;
   }
 
-  get isFullyPlaced() {
+  get isComplete() {
     return this.ships.length === FLEET.length;
   }
 
-  hasShot(row, col) {
-    return this.shots.has(`${row},${col}`);
+  wasShot(x, y) {
+    return this.shots.has(key(x, y));
   }
 
-  /**
-   * Fires at a cell. Returns { result: 'miss' | 'hit' | 'sunk', ship }.
-   * Throws when the cell is off-board or already targeted.
-   */
-  receiveAttack(row, col) {
-    if (!this.inBounds(row, col)) {
-      throw new Error(`Shot out of bounds: ${row},${col}`);
+  /** Fires once. Returns { outcome, ship } — callers must reject repeat shots first. */
+  receiveShot(x, y) {
+    const ship = this.shipAt(x, y);
+    if (!ship) {
+      this.shots.set(key(x, y), MISS);
+      return { outcome: MISS, ship: null };
     }
-    if (this.hasShot(row, col)) {
-      throw new Error(`Already fired at ${row},${col}`);
-    }
-    this.shots.add(`${row},${col}`);
-    const ship = this.shipAt(row, col);
-    if (!ship) return { result: CELL.MISS, ship: null };
+    this.shots.set(key(x, y), HIT);
     ship.hits += 1;
-    return { result: ship.hits === ship.size ? CELL.SUNK : CELL.HIT, ship };
+    return { outcome: ship.hits === ship.size ? SUNK : HIT, ship };
   }
 
   isSunk(ship) {
@@ -96,26 +88,22 @@ export class Board {
     return this.ships.length > 0 && this.ships.every((s) => this.isSunk(s));
   }
 
-  /** State of a cell, hiding unhit ships unless `revealShips` is set. */
-  cellState(row, col, revealShips = false) {
-    const ship = this.shipAt(row, col);
-    if (this.hasShot(row, col)) {
-      if (!ship) return CELL.MISS;
-      return this.isSunk(ship) ? CELL.SUNK : CELL.HIT;
-    }
-    return ship && revealShips ? CELL.SHIP : CELL.EMPTY;
+  /** Shot result at a cell: HIT, MISS or null when untouched. */
+  shotResult(x, y) {
+    return this.shots.get(key(x, y)) ?? null;
   }
 }
 
-export function placeFleetRandomly(board, random = Math.random) {
+export function placeRandomFleet(board, random = Math.random) {
   for (const { name, size } of FLEET) {
+    if (board.ships.some((s) => s.name === name)) continue;
     let placed = false;
     while (!placed) {
       const horizontal = random() < 0.5;
-      const row = Math.floor(random() * board.size);
-      const col = Math.floor(random() * board.size);
-      if (board.canPlace({ row, col, size, horizontal })) {
-        board.place({ name, row, col, size, horizontal });
+      const x = Math.floor(random() * SIZE);
+      const y = Math.floor(random() * SIZE);
+      if (board.canPlace(x, y, size, horizontal)) {
+        board.place(name, size, x, y, horizontal);
         placed = true;
       }
     }
@@ -123,124 +111,104 @@ export function placeFleetRandomly(board, random = Math.random) {
   return board;
 }
 
-/** Computer opponent: random fire until a hit, then work along the target. */
-export class ComputerPlayer {
-  constructor(size = BOARD_SIZE, random = Math.random) {
-    this.size = size;
-    this.random = random;
-    this.targets = [];
-  }
-
-  nextShot(enemyBoard) {
-    while (this.targets.length > 0) {
-      const target = this.targets.shift();
-      if (!enemyBoard.hasShot(target.row, target.col)) return target;
-    }
-    const open = [];
-    for (let row = 0; row < this.size; row += 1) {
-      for (let col = 0; col < this.size; col += 1) {
-        // Ships are at least 2 long, so only half the cells need probing.
-        if (!enemyBoard.hasShot(row, col) && (row + col) % 2 === 0) {
-          open.push({ row, col });
-        }
-      }
-    }
-    if (open.length === 0) {
-      for (let row = 0; row < this.size; row += 1) {
-        for (let col = 0; col < this.size; col += 1) {
-          if (!enemyBoard.hasShot(row, col)) open.push({ row, col });
-        }
-      }
-    }
-    if (open.length === 0) return null;
-    return open[Math.floor(this.random() * open.length)];
-  }
-
-  fire(enemyBoard) {
-    const shot = this.nextShot(enemyBoard);
-    if (!shot) return null;
-    const outcome = enemyBoard.receiveAttack(shot.row, shot.col);
-    if (outcome.result === CELL.HIT) {
-      this.queueNeighbours(shot, enemyBoard);
-    } else if (outcome.result === CELL.SUNK) {
-      this.targets = [];
-    }
-    return { ...shot, ...outcome };
-  }
-
-  queueNeighbours({ row, col }, enemyBoard) {
-    const candidates = [
-      { row: row - 1, col },
-      { row: row + 1, col },
-      { row, col: col - 1 },
-      { row, col: col + 1 },
-    ];
-    for (const c of candidates) {
-      if (enemyBoard.inBounds(c.row, c.col) && !enemyBoard.hasShot(c.row, c.col)) {
-        this.targets.push(c);
-      }
-    }
-  }
-}
-
+/**
+ * Drives one match. The player places a fleet, then the two sides alternate
+ * strictly: `fireAtEnemy` then `fireAtPlayer`, one shot each.
+ */
 export class Game {
-  constructor({ random = Math.random } = {}) {
+  constructor({ random = Math.random, opponent = null } = {}) {
     this.random = random;
+    this.opponent = opponent;
     this.reset();
   }
 
   reset() {
     this.playerBoard = new Board();
-    this.computerBoard = new Board();
-    placeFleetRandomly(this.computerBoard, this.random);
-    this.computer = new ComputerPlayer(BOARD_SIZE, this.random);
+    this.enemyBoard = new Board();
+    placeRandomFleet(this.enemyBoard, this.random);
+    this.opponent?.reset();
     this.phase = 'placement';
+    this.turn = 'player';
     this.winner = null;
-    this.log = [];
+    this.playerShots = 0;
+    this.computerShots = 0;
   }
 
-  get nextShipToPlace() {
+  get nextShip() {
     return FLEET[this.playerBoard.ships.length] ?? null;
   }
 
-  placePlayerShip(row, col, horizontal) {
-    if (this.phase !== 'placement') throw new Error('Placement is over');
-    const ship = this.nextShipToPlace;
-    if (!ship) throw new Error('Fleet already placed');
-    const placed = this.playerBoard.place({ ...ship, row, col, horizontal });
-    if (this.playerBoard.isFullyPlaced) this.phase = 'battle';
-    return placed;
+  get canStart() {
+    return this.phase === 'placement' && this.playerBoard.isComplete;
   }
 
-  randomisePlayerFleet() {
+  placeNextShip(x, y, horizontal) {
+    if (this.phase !== 'placement') return { ok: false, reason: 'phase' };
+    const ship = this.nextShip;
+    if (!ship) return { ok: false, reason: 'complete' };
+    if (!this.playerBoard.canPlace(x, y, ship.size, horizontal)) {
+      return { ok: false, reason: 'invalid' };
+    }
+    return { ok: true, ship: this.playerBoard.place(ship.name, ship.size, x, y, horizontal) };
+  }
+
+  placeRemainingRandomly() {
+    if (this.phase !== 'placement') return false;
+    placeRandomFleet(this.playerBoard, this.random);
+    return true;
+  }
+
+  clearPlacement() {
+    if (this.phase !== 'placement') return false;
     this.playerBoard = new Board();
-    placeFleetRandomly(this.playerBoard, this.random);
-    this.phase = 'battle';
+    return true;
   }
 
-  /** Player fires, then the computer replies unless the game just ended. */
-  playerFire(row, col) {
-    if (this.phase !== 'battle') throw new Error('Game is not in battle phase');
-    const player = this.computerBoard.receiveAttack(row, col);
-    this.log.unshift(describe('You', row, col, player));
-    if (this.computerBoard.allSunk) {
+  start() {
+    if (!this.canStart) return false;
+    this.phase = 'playing';
+    this.turn = 'player';
+    return true;
+  }
+
+  /** Player's shot. A repeat or off-board shot is rejected and keeps the turn. */
+  fireAtEnemy(x, y) {
+    if (this.phase !== 'playing' || this.turn !== 'player') return { ok: false, reason: 'turn' };
+    if (!inBounds(x, y)) return { ok: false, reason: 'bounds' };
+    if (this.enemyBoard.wasShot(x, y)) return { ok: false, reason: 'repeat' };
+
+    const { outcome, ship } = this.enemyBoard.receiveShot(x, y);
+    this.playerShots += 1;
+    if (this.enemyBoard.allSunk) {
       this.phase = 'over';
       this.winner = 'player';
-      return { player, computer: null };
+    } else {
+      this.turn = 'computer';
     }
-    const computer = this.computer.fire(this.playerBoard);
-    if (computer) this.log.unshift(describe('Computer', computer.row, computer.col, computer));
+    return { ok: true, by: 'player', x, y, outcome, ship };
+  }
+
+  /** The computer's single reply shot. */
+  fireAtPlayer() {
+    if (this.phase !== 'playing' || this.turn !== 'computer') return { ok: false, reason: 'turn' };
+    const shot = this.opponent.nextShot();
+    const { outcome, ship } = this.playerBoard.receiveShot(shot.x, shot.y);
+    this.opponent.recordResult(shot, outcome, ship ? { name: ship.name, size: ship.size } : null);
+    this.computerShots += 1;
     if (this.playerBoard.allSunk) {
       this.phase = 'over';
       this.winner = 'computer';
+    } else {
+      this.turn = 'player';
     }
-    return { player, computer };
+    return { ok: true, by: 'computer', x: shot.x, y: shot.y, outcome, ship };
   }
 }
 
-function describe(who, row, col, outcome) {
-  const cell = `${String.fromCharCode(65 + col)}${row + 1}`;
-  if (outcome.result === CELL.SUNK) return `${who} sank the ${outcome.ship.name} at ${cell}`;
-  if (outcome.result === CELL.HIT) return `${who} hit a ship at ${cell}`;
-  return `${who} missed at ${cell}`;
+export function describeShot({ by, x, y, outcome, ship }) {
+  const who = by === 'player' ? 'You' : 'Computer';
+  const where = cellName(x, y);
+  if (outcome === SUNK) return `${who} fired at ${where}. Sunk: ${ship.name}`;
+  if (outcome === HIT) return `${who} fired at ${where}. Hit`;
+  return `${who} fired at ${where}. Miss`;
 }
