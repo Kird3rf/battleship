@@ -13,6 +13,11 @@ export const TARGET = 'target';
  * cannot miss a ship because the shortest ship is 2 cells long. A hit switches
  * to target mode: the orthogonal neighbours are queued, and once a second hit
  * lines up, off-axis candidates are dropped in favour of extending the line.
+ *
+ * Ships may touch, so a line of hits is not necessarily one ship. A hit stays
+ * a target until a ship is announced sunk; whenever the queue runs dry the axis
+ * is dropped and the queue is rebuilt from the neighbours of every hit that has
+ * not been accounted for by a sinking.
  */
 export class Opponent {
   constructor({ random = Math.random } = {}) {
@@ -23,12 +28,15 @@ export class Opponent {
   reset() {
     this.tried = new Set();
     this.queue = []; // { x, y } candidates, newest first
-    this.hits = []; // hits on the ship currently being targeted
+    this.hits = []; // hits of the current line, used to infer the axis
+    this.unsunk = []; // every hit not yet accounted for by a sinking
     this.axis = null; // 'h' | 'v' once inferred
   }
 
   get mode() {
-    return this.queue.some((c) => !this.hasTried(c.x, c.y)) ? TARGET : HUNT;
+    const live = (c) => !this.hasTried(c.x, c.y);
+    if (this.queue.some(live)) return TARGET;
+    return this.unsunk.some((h) => this.neighbours(h).length > 0) ? TARGET : HUNT;
   }
 
   hasTried(x, y) {
@@ -39,10 +47,10 @@ export class Opponent {
   nextShot() {
     let shot = this.takeFromQueue();
     if (!shot) {
-      // The run is over even though nothing sank: forget it, or the next hit
-      // would be chased along the abandoned ship's axis.
-      this.abandonRun();
-      shot = this.hunt();
+      // The line is exhausted but the damage is not: drop the axis and come at
+      // the unsunk hits from every remaining side before hunting again.
+      this.requeueUnsunk();
+      shot = this.takeFromQueue() ?? this.hunt();
     }
     if (!shot) return null;
     this.tried.add(key(shot.x, shot.y));
@@ -57,10 +65,10 @@ export class Opponent {
     return null;
   }
 
-  abandonRun() {
-    this.queue = [];
+  requeueUnsunk() {
     this.hits = [];
     this.axis = null;
+    this.queue = dedupe(this.unsunk.flatMap((h) => this.neighbours(h)));
   }
 
   hunt() {
@@ -77,16 +85,21 @@ export class Opponent {
     return pool[Math.floor(this.random() * pool.length)];
   }
 
-  /** Feeds back the outcome of the shot returned by `nextShot`. */
-  recordResult(shot, outcome) {
+  /**
+   * Feeds back the outcome of the shot returned by `nextShot`. `ship` carries
+   * the size of a ship that has just sunk, which is all that is needed to tell
+   * its cells apart from those of a ship touching it.
+   */
+  recordResult(shot, outcome, ship = null) {
+    if (outcome !== HIT && outcome !== SUNK) return;
+    this.unsunk.push(shot);
+
     if (outcome === SUNK) {
-      this.hits.push(shot);
-      this.dropCandidatesFor(this.hits);
-      this.hits = [];
-      this.axis = null;
+      const sunk = this.sunkCells(shot, ship?.size);
+      this.unsunk = this.unsunk.filter((h) => !sunk.has(key(h.x, h.y)));
+      this.requeueUnsunk();
       return;
     }
-    if (outcome !== HIT) return;
 
     this.hits.push(shot);
     this.inferAxis();
@@ -131,21 +144,42 @@ export class Opponent {
     ].filter((c) => inBounds(c.x, c.y) && !this.hasTried(c.x, c.y));
   }
 
-  /** After a sinking, forget candidates that only existed because of that ship. */
-  dropCandidatesFor(shipHits) {
-    const adjacent = new Set();
-    for (const hit of shipHits) {
-      for (const c of [
-        { x: hit.x, y: hit.y - 1 },
-        { x: hit.x, y: hit.y + 1 },
-        { x: hit.x - 1, y: hit.y },
-        { x: hit.x + 1, y: hit.y },
-      ]) {
-        adjacent.add(key(c.x, c.y));
+  /**
+   * The cells of the ship the sinking shot completed: the contiguous run of
+   * unsunk hits through that cell. Touching ships share a line, so the run is
+   * read along one axis only, preferring the one already inferred.
+   */
+  sunkCells(shot, size) {
+    const hit = new Set(this.unsunk.map((h) => key(h.x, h.y)));
+    const run = (dx, dy) => {
+      const cells = [shot];
+      for (const step of [1, -1]) {
+        for (let i = 1; hit.has(key(shot.x + dx * i * step, shot.y + dy * i * step)); i += 1) {
+          cells.push({ x: shot.x + dx * i * step, y: shot.y + dy * i * step });
+        }
       }
-    }
-    this.queue = this.queue.filter((c) => !adjacent.has(key(c.x, c.y)));
+      return cells;
+    };
+
+    const horizontal = run(1, 0);
+    const vertical = run(0, 1);
+    const line = horizontal.length === vertical.length
+      ? (this.axis === 'v' ? vertical : horizontal)
+      : (horizontal.length > vertical.length ? horizontal : vertical);
+
+    // A longer line than the ship means a touching ship is caught up in it;
+    // the ship's own cells are the ones nearest the shot that completed it.
+    const cells = size
+      ? line
+        .sort((a, b) => distance(shot, a) - distance(shot, b))
+        .slice(0, size)
+      : line;
+    return new Set(cells.map((c) => key(c.x, c.y)));
   }
+}
+
+function distance(a, b) {
+  return Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
 }
 
 function dedupe(cells) {
