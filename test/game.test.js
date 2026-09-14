@@ -1,223 +1,245 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
-  BOARD_SIZE,
   Board,
-  CELL,
-  ComputerPlayer,
   FLEET,
   Game,
-  coordsFor,
-  placeFleetRandomly,
+  HIT,
+  MISS,
+  SIZE,
+  SUNK,
+  cellName,
+  placeRandomFleet,
+  shipCells,
 } from '../src/game.js';
+import { Opponent } from '../src/ai.js';
 
-/** Deterministic stand-in for Math.random. */
-function sequence(values) {
-  let i = 0;
-  return () => values[i++ % values.length];
-}
-
-test('coordsFor lays cells out horizontally and vertically', () => {
-  assert.deepEqual(coordsFor({ row: 1, col: 2, size: 3, horizontal: true }), [
-    { row: 1, col: 2 },
-    { row: 1, col: 3 },
-    { row: 1, col: 4 },
-  ]);
-  assert.deepEqual(coordsFor({ row: 1, col: 2, size: 2, horizontal: false }), [
-    { row: 1, col: 2 },
-    { row: 2, col: 2 },
-  ]);
+test('coordinates are labelled A-J by 1-10', () => {
+  assert.equal(cellName(0, 0), 'A1');
+  assert.equal(cellName(9, 9), 'J10');
+  assert.equal(cellName(2, 4), 'C5');
 });
 
-test('ships must fit on the board and may not overlap', () => {
+test('placement rejects overlapping ships', () => {
   const board = new Board();
-  board.place({ name: 'Destroyer', row: 0, col: 0, size: 2, horizontal: true });
+  board.place('Cruiser', 3, 2, 2, true); // C3-E3
 
-  assert.equal(board.canPlace({ row: 0, col: 9, size: 2, horizontal: true }), false);
-  assert.equal(board.canPlace({ row: 9, col: 0, size: 2, horizontal: false }), false);
-  assert.equal(board.canPlace({ row: 0, col: 1, size: 3, horizontal: true }), false);
-  assert.equal(board.canPlace({ row: 1, col: 0, size: 3, horizontal: true }), true);
-  assert.throws(() => board.place({ name: 'Cruiser', row: 0, col: 0, size: 3, horizontal: false }));
+  assert.equal(board.canPlace(2, 2, 2, true), false);
+  assert.equal(board.canPlace(4, 2, 4, true), false); // overlaps the stern
+  assert.equal(board.canPlace(3, 0, 5, false), false); // crosses the hull
+  assert.throws(() => board.place('Destroyer', 2, 3, 2, true), /Invalid placement/);
+  assert.equal(board.ships.length, 1);
 });
 
-test('attacks report miss, hit and sunk', () => {
+test('placement rejects ships running off any edge, including wrap-around', () => {
   const board = new Board();
-  board.place({ name: 'Destroyer', row: 2, col: 2, size: 2, horizontal: true });
 
-  assert.equal(board.receiveAttack(0, 0).result, CELL.MISS);
-  assert.equal(board.receiveAttack(2, 2).result, CELL.HIT);
-  const last = board.receiveAttack(2, 3);
-  assert.equal(last.result, CELL.SUNK);
-  assert.equal(last.ship.name, 'Destroyer');
-  assert.equal(board.allSunk, true);
+  assert.equal(board.canPlace(7, 0, 4, true), false); // off the right edge
+  assert.equal(board.canPlace(0, 7, 4, false), false); // off the bottom edge
+  assert.equal(board.canPlace(-1, 0, 2, true), false);
+  assert.equal(board.canPlace(0, -1, 2, false), false);
+
+  // A ship starting near the right edge must not wrap onto the next row.
+  assert.equal(board.canPlace(9, 3, 2, true), false);
+  const wrapped = shipCells(9, 3, 2, true);
+  assert.deepEqual(wrapped[1], { x: 10, y: 3 }); // stays on row 4, off-board
 });
 
-test('repeated and out of bounds shots are rejected', () => {
+test('placement accepts ships that touch', () => {
   const board = new Board();
-  board.receiveAttack(5, 5);
-  assert.throws(() => board.receiveAttack(5, 5), /Already fired/);
-  assert.throws(() => board.receiveAttack(-1, 0), /out of bounds/);
-  assert.throws(() => board.receiveAttack(0, BOARD_SIZE), /out of bounds/);
+  board.place('Cruiser', 3, 2, 2, true); // C3-E3
+
+  assert.equal(board.canPlace(5, 2, 2, true), true); // nose to tail
+  assert.equal(board.canPlace(2, 3, 3, true), true); // side by side
+  assert.equal(board.canPlace(2, 1, 3, true), true);
+  board.place('Destroyer', 2, 5, 2, true);
+  board.place('Submarine', 3, 2, 3, true);
+  assert.equal(board.ships.length, 3);
 });
 
-test('cellState hides unhit enemy ships but shows shot results', () => {
-  const board = new Board();
-  board.place({ name: 'Destroyer', row: 0, col: 0, size: 2, horizontal: true });
-
-  assert.equal(board.cellState(0, 0), CELL.EMPTY);
-  assert.equal(board.cellState(0, 0, true), CELL.SHIP);
-  board.receiveAttack(0, 0);
-  assert.equal(board.cellState(0, 0), CELL.HIT);
-  board.receiveAttack(0, 1);
-  assert.equal(board.cellState(0, 1), CELL.SUNK);
-  board.receiveAttack(5, 5);
-  assert.equal(board.cellState(5, 5), CELL.MISS);
-});
-
-test('random placement puts the whole fleet on the board without overlaps', () => {
-  const board = placeFleetRandomly(new Board());
-  assert.equal(board.ships.length, FLEET.length);
-  assert.equal(board.isFullyPlaced, true);
-
-  const occupied = new Set();
-  for (const ship of board.ships) {
-    for (const c of ship.coords) {
-      assert.ok(board.inBounds(c.row, c.col));
-      occupied.add(`${c.row},${c.col}`);
-    }
-  }
+test('random placement places all five ships, over 1000 runs', () => {
   const cells = FLEET.reduce((sum, s) => sum + s.size, 0);
-  assert.equal(occupied.size, cells);
-});
+  for (let run = 0; run < 1000; run += 1) {
+    const board = placeRandomFleet(new Board());
+    assert.equal(board.ships.length, FLEET.length);
 
-test('computer hunts around a hit before probing elsewhere', () => {
-  const board = new Board();
-  board.place({ name: 'Destroyer', row: 4, col: 4, size: 2, horizontal: true });
-  const computer = new ComputerPlayer(BOARD_SIZE, sequence([0]));
-  // Force the first shot onto the ship, then let the targeting queue take over.
-  computer.targets.push({ row: 4, col: 4 });
-
-  const first = computer.fire(board);
-  assert.equal(first.result, CELL.HIT);
-  assert.ok(computer.targets.length > 0);
-  assert.ok(
-    computer.targets.every(
-      (t) => Math.abs(t.row - 4) + Math.abs(t.col - 4) === 1,
-    ),
-  );
-
-  const follow = computer.nextShot(board);
-  assert.equal(Math.abs(follow.row - 4) + Math.abs(follow.col - 4), 1);
-});
-
-test('computer clears its target queue once a ship is sunk', () => {
-  const board = new Board();
-  board.place({ name: 'Destroyer', row: 0, col: 0, size: 2, horizontal: true });
-  const computer = new ComputerPlayer(BOARD_SIZE, sequence([0]));
-  computer.targets.push({ row: 0, col: 0 }, { row: 0, col: 1 });
-
-  computer.fire(board);
-  const sunk = computer.fire(board);
-  assert.equal(sunk.result, CELL.SUNK);
-  assert.deepEqual(computer.targets, []);
-});
-
-test('computer never repeats a shot and eventually sinks everything', () => {
-  const board = placeFleetRandomly(new Board());
-  const computer = new ComputerPlayer(BOARD_SIZE);
-  const seen = new Set();
-
-  for (let i = 0; i < BOARD_SIZE * BOARD_SIZE && !board.allSunk; i += 1) {
-    const shot = computer.fire(board);
-    const key = `${shot.row},${shot.col}`;
-    assert.equal(seen.has(key), false);
-    seen.add(key);
+    const occupied = new Set();
+    for (const ship of board.ships) {
+      assert.equal(ship.cells.length, ship.size);
+      for (const c of ship.cells) {
+        assert.ok(c.x >= 0 && c.x < SIZE && c.y >= 0 && c.y < SIZE, 'ship stays on the board');
+        occupied.add(`${c.x},${c.y}`);
+      }
+    }
+    assert.equal(occupied.size, cells, 'no two ships overlap');
   }
+});
+
+test('sink detection fires exactly on the final cell, for every ship length', () => {
+  for (const { name, size } of FLEET) {
+    const board = new Board();
+    const ship = board.place(name, size, 0, 0, true);
+
+    ship.cells.forEach((c, i) => {
+      const { outcome } = board.receiveShot(c.x, c.y);
+      const last = i === size - 1;
+      assert.equal(outcome, last ? SUNK : HIT, `${name} cell ${i + 1}/${size}`);
+      assert.equal(board.isSunk(ship), last);
+    });
+  }
+});
+
+test('a miss never sinks a ship and hits are recorded per cell', () => {
+  const board = new Board();
+  const ship = board.place('Destroyer', 2, 4, 4, false);
+
+  assert.equal(board.receiveShot(0, 0).outcome, MISS);
+  assert.equal(board.shotResult(0, 0), MISS);
+  assert.equal(board.receiveShot(4, 4).outcome, HIT);
+  assert.equal(board.shotResult(4, 4), HIT);
+  assert.equal(board.isSunk(ship), false);
+  assert.equal(board.receiveShot(4, 5).outcome, SUNK);
   assert.equal(board.allSunk, true);
 });
 
-test('game placement phase walks the fleet then starts the battle', () => {
-  const game = new Game();
-  assert.equal(game.phase, 'placement');
-  assert.equal(game.nextShipToPlace.name, FLEET[0].name);
+test('win detection fires exactly when the fifth ship sinks, not before', () => {
+  const board = placeRandomFleet(new Board());
+  const ships = [...board.ships];
 
-  FLEET.forEach((ship, i) => game.placePlayerShip(i, 0, true));
-
-  assert.equal(game.phase, 'battle');
-  assert.equal(game.nextShipToPlace, null);
-  assert.equal(game.playerBoard.isFullyPlaced, true);
-  assert.throws(() => game.placePlayerShip(0, 0, true), /Placement is over/);
+  ships.forEach((ship, index) => {
+    ship.cells.forEach((c, i) => {
+      const { outcome } = board.receiveShot(c.x, c.y);
+      const lastCell = i === ship.size - 1;
+      const lastShip = index === ships.length - 1;
+      assert.equal(outcome, lastCell ? SUNK : HIT);
+      assert.equal(board.allSunk, lastCell && lastShip);
+    });
+  });
+  assert.equal(board.allSunk, true);
 });
 
-test('firing before the battle phase is rejected', () => {
-  const game = new Game();
-  assert.throws(() => game.playerFire(0, 0), /not in battle phase/);
+test('start is blocked until all five ships are placed', () => {
+  const game = new Game({ opponent: new Opponent() });
+
+  FLEET.forEach((ship, i) => {
+    assert.equal(game.canStart, false);
+    assert.equal(game.start(), false);
+    assert.equal(game.nextShip.name, ship.name);
+    assert.equal(game.placeNextShip(0, i, true).ok, true);
+  });
+
+  assert.equal(game.canStart, true);
+  assert.equal(game.start(), true);
+  assert.equal(game.phase, 'playing');
+  assert.equal(game.placeNextShip(0, 9, true).ok, false);
 });
 
-test('player shot is answered by the computer and logged', () => {
-  const game = new Game();
-  game.randomisePlayerFleet();
+test('placement helpers refuse invalid cells and support random and clear', () => {
+  const game = new Game({ opponent: new Opponent() });
 
-  const { player, computer } = game.playerFire(0, 0);
-  assert.ok([CELL.MISS, CELL.HIT, CELL.SUNK].includes(player.result));
-  assert.ok(computer);
-  assert.equal(game.playerBoard.hasShot(computer.row, computer.col), true);
-  assert.equal(game.log.length, 2);
+  const offBoard = game.placeNextShip(7, 0, true); // Carrier is 5 long
+  assert.deepEqual(offBoard, { ok: false, reason: 'invalid' });
+
+  game.placeNextShip(0, 0, true);
+  const overlap = game.placeNextShip(0, 0, true);
+  assert.equal(overlap.ok, false);
+
+  game.placeRemainingRandomly();
+  assert.equal(game.playerBoard.isComplete, true);
+  game.clearPlacement();
+  assert.equal(game.playerBoard.ships.length, 0);
+  assert.equal(game.canStart, false);
 });
 
-test('sinking the enemy fleet ends the game before the computer replies', () => {
-  const game = new Game();
-  game.randomisePlayerFleet();
+test('turns alternate strictly and a hit grants no extra shot', () => {
+  const game = startedGame();
+  const enemyShip = game.enemyBoard.ships[0];
 
-  const enemyCells = game.computerBoard.ships.flatMap((s) => s.coords);
-  let shotsBack = 0;
-  for (const { row, col } of enemyCells) {
-    const { computer } = game.playerFire(row, col);
-    if (computer) shotsBack += 1;
-  }
+  const hit = game.fireAtEnemy(enemyShip.cells[0].x, enemyShip.cells[0].y);
+  assert.equal(hit.outcome, HIT);
+  assert.equal(game.turn, 'computer');
+
+  const secondAttempt = game.fireAtEnemy(enemyShip.cells[1].x, enemyShip.cells[1].y);
+  assert.deepEqual(secondAttempt, { ok: false, reason: 'turn' });
+
+  assert.equal(game.fireAtPlayer().ok, true);
+  assert.equal(game.turn, 'player');
+  assert.deepEqual(game.fireAtPlayer(), { ok: false, reason: 'turn' });
+  assert.equal(game.playerShots, 1);
+  assert.equal(game.computerShots, 1);
+});
+
+test('a repeat shot is rejected and does not consume the turn', () => {
+  const game = startedGame();
+  const target = firstEmptyCell(game.enemyBoard);
+  game.fireAtEnemy(target.x, target.y);
+  game.fireAtPlayer();
+
+  const repeat = game.fireAtEnemy(target.x, target.y);
+  assert.deepEqual(repeat, { ok: false, reason: 'repeat' });
+  assert.equal(game.turn, 'player', 'turn is kept');
+  assert.equal(game.playerShots, 1, 'shot count is unchanged');
+
+  const next = firstEmptyCell(game.enemyBoard);
+  assert.equal(game.fireAtEnemy(next.x, next.y).ok, true);
+});
+
+test('off-board shots are rejected', () => {
+  const game = startedGame();
+  assert.deepEqual(game.fireAtEnemy(-1, 0), { ok: false, reason: 'bounds' });
+  assert.deepEqual(game.fireAtEnemy(0, SIZE), { ok: false, reason: 'bounds' });
+  assert.equal(game.playerShots, 0);
+});
+
+test('the game ends when the enemy fleet sinks, before the computer replies', () => {
+  const game = startedGame();
+  const targets = game.enemyBoard.ships.flatMap((s) => s.cells);
+
+  targets.forEach((c, i) => {
+    const shot = game.fireAtEnemy(c.x, c.y);
+    assert.equal(shot.ok, true);
+    if (i < targets.length - 1) assert.equal(game.fireAtPlayer().ok, true);
+  });
 
   assert.equal(game.phase, 'over');
   assert.equal(game.winner, 'player');
-  assert.equal(shotsBack, enemyCells.length - 1);
-  assert.throws(() => game.playerFire(0, 1), /not in battle phase/);
+  assert.equal(game.computerShots, targets.length - 1, 'no reply after the losing shot');
+  assert.deepEqual(game.fireAtPlayer(), { ok: false, reason: 'turn' });
 });
 
-test('losing the fleet makes the computer the winner', () => {
-  const game = new Game();
-  game.randomisePlayerFleet();
-  for (const ship of game.playerBoard.ships) {
-    for (const { row, col } of ship.coords) {
-      if (!game.playerBoard.hasShot(row, col)) game.playerBoard.receiveAttack(row, col);
-    }
-  }
-  // Leave one player cell for the computer's reply to finish the job.
-  const last = game.playerBoard.ships[0].coords[0];
-  game.playerBoard.shots.delete(`${last.row},${last.col}`);
-  game.playerBoard.ships[0].hits -= 1;
-  game.computer.targets.push(last);
-
-  const open = [];
-  for (let row = 0; row < BOARD_SIZE; row += 1) {
-    for (let col = 0; col < BOARD_SIZE; col += 1) {
-      if (!game.computerBoard.hasShot(row, col)) open.push({ row, col });
-    }
-  }
-  game.playerFire(open[0].row, open[0].col);
-
-  assert.equal(game.phase, 'over');
-  assert.equal(game.winner, 'computer');
-});
-
-test('reset deals a fresh board and fleet', () => {
-  const game = new Game();
-  game.randomisePlayerFleet();
-  game.playerFire(0, 0);
+test('play again resets every piece of state, including ship objects', () => {
+  const game = startedGame();
+  const oldEnemyShips = game.enemyBoard.ships;
+  game.fireAtEnemy(0, 0);
+  game.fireAtPlayer();
   game.reset();
 
   assert.equal(game.phase, 'placement');
+  assert.equal(game.turn, 'player');
   assert.equal(game.winner, null);
-  assert.deepEqual(game.log, []);
+  assert.equal(game.playerShots, 0);
+  assert.equal(game.computerShots, 0);
   assert.equal(game.playerBoard.ships.length, 0);
-  assert.equal(game.computerBoard.isFullyPlaced, true);
-  assert.equal(game.computerBoard.shots.size, 0);
+  assert.equal(game.playerBoard.shots.size, 0);
+  assert.equal(game.enemyBoard.shots.size, 0);
+  assert.equal(game.enemyBoard.ships.length, FLEET.length);
+  assert.notEqual(game.enemyBoard.ships, oldEnemyShips);
+  assert.ok(game.enemyBoard.ships.every((s) => s.hits === 0));
+  assert.equal(game.opponent.tried.size, 0);
 });
+
+function startedGame() {
+  const game = new Game({ opponent: new Opponent() });
+  game.placeRemainingRandomly();
+  game.start();
+  return game;
+}
+
+function firstEmptyCell(board) {
+  for (let y = 0; y < SIZE; y += 1) {
+    for (let x = 0; x < SIZE; x += 1) {
+      if (!board.wasShot(x, y)) return { x, y };
+    }
+  }
+  throw new Error('board is full');
+}
